@@ -12,6 +12,8 @@ class DROSIM_API AManager : public AActor, public IManagerInterface
 {
 	GENERATED_BODY()
 	
+#define DRONEWEIGHT(BatCount) (InitialWeight+BatteryWeight*BatCount)
+	
 public:
 	AManager();
 
@@ -21,7 +23,11 @@ protected:
 	void InitSimulation();
 	bool DroneDestroyedEvent();
 	void HandleSimulationEnd();
-	void MutateSimulationParameters(const bool IsSimSuccessful);
+	void MutateSimulationParameters(const bool IsGroupSuccessful);
+	float CalculateMaximumAutonomy() const;
+	void AutoSetMinBatteryCountForGroup();
+	void CalculateGroupBatteryAutonomy();
+	static void ThrowUnexpectedWarning(const wchar_t* Text);
 	void ManageNewSimulation();
 	void SpawnDrones(const TSubclassOf<ADrone> DroneStrategy);
 	void WriteResultsToFile();
@@ -52,6 +58,7 @@ private:
 	float BatteryCapacity;
 	float BatteryWeight;
 	int MinBatteryCount;
+	int MaxBatteryCount;
 	int GroupBatteryCount;
 	float InitialWeight;
 
@@ -60,6 +67,7 @@ private:
 	
 	float TickInterval;
 	float CurrentSimulatedTime;
+	float MaxTimePerSim;
 	int SimulationSpeed;
 	int LinesThickness;
 	
@@ -68,6 +76,7 @@ private:
 	int SimGroupSize;
 	int CurrentGroupSim = 0;
 	int SuccessfulSim = 0;
+	float SummedTimesToFind = 0;
 	bool IsCurveFound = false;
 	bool AutoSuccess = false;
 	bool AutoFail = false;
@@ -79,7 +88,8 @@ private:
 
 	bool SimulationHasEnded = false;
 
-	TArray<std::vector<float>> SuccessfulConfigs;
+	std::vector<float> FastConfig;
+	TArray<std::vector<float>> SlowConfigs;
 
 	AObjective* CurrentSimulatedObjective;
 	TArray<ADrone*> CurrentSimulatedDrones;

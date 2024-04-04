@@ -53,8 +53,6 @@ public:
 	int ID = -1;
 	IManagerInterface* Manager;
 	std::vector<FVector2D> AssignedZone;
-	float Battery;
-	float BatteryConsumptionPerTick;
 	
 	UFUNCTION()
 	void OnObjectNear(UPrimitiveComponent* ThisSphere, AActor* OtherActor, UPrimitiveComponent* OtherSphere, int32 OtherBodyIndex, bool bFromSweep, const FHitResult& SweepResult);

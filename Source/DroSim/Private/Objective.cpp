@@ -77,7 +77,7 @@ void AObjective::Tick(float DeltaTime)
 	
 	FVector NextLocation = GetActorLocation() + MoveDirection * MovementSpeed * SimulationSpeed;
 	
-	if (NextLocation.Y >= 0 || NextLocation.Y <= YLimit) SetActorLocation(NextLocation);
+	if (NextLocation.Y >= 0 && NextLocation.Y <= YLimit) SetActorLocation(NextLocation);
 	else
 	{
 		MoveDirection.Y = -MoveDirection.Y;

@@ -57,12 +57,8 @@ void AManager::LoadConfig()
 	GConfig->GetFloat(TEXT("sim/drones"), TEXT("battery_capacity"), BatteryCapacity, ConfigFilePath);
 	GConfig->GetFloat(TEXT("sim/drones"), TEXT("battery_weight"), BatteryWeight, ConfigFilePath);
 	GConfig->GetInt(TEXT("sim/drones"), TEXT("min_battery_count"), MinBatteryCount, ConfigFilePath);
+	GConfig->GetInt(TEXT("sim/drones"), TEXT("max_battery_count"), MaxBatteryCount, ConfigFilePath);
 	GConfig->GetFloat(TEXT("sim/drones"), TEXT("initial_weight"), InitialWeight, ConfigFilePath);
-	
-	// Initial config for the first group of simulations
-	GroupSpeed = MinSpeed;
-	GroupNumDrones = MinNumDrones;
-	GroupBatteryCount = MinBatteryCount;
 	
 	GConfig->GetFloat(TEXT("sim/manager"), TEXT("speed_increment"), SpeedIncrement, ConfigFilePath);
 	GConfig->GetInt(TEXT("sim/manager"), TEXT("drone_increment"), DroneIncrement, ConfigFilePath);
@@ -77,6 +73,12 @@ void AManager::BeginPlay()
 	Super::BeginPlay();
 	
 	SetActorTickInterval(TickInterval);
+
+	// Initial config for the first group of simulations
+	GroupSpeed = MinSpeed;
+	GroupNumDrones = MinNumDrones;
+	GroupBatteryCount = MinBatteryCount;
+	MaxTimePerSim = CalculateMaximumAutonomy();
 
 	PrintSimConfigRecap();
 	
@@ -106,6 +108,8 @@ void AManager::Tick(float DeltaTime)
 	Super::Tick(DeltaTime);
 	
 	CurrentSimulatedTime += DeltaTime * SimulationSpeed;
+
+	if (CurrentSimulatedTime >= MaxTimePerSim) HandleSimulationEnd();
 }
 
 
@@ -134,9 +138,10 @@ void AManager::ManageNewSimulation()
 				if (SimGroupSize == 1) MutateSimulationParameters(SuccessfulSim == 1);
         		else MutateSimulationParameters(SuccessfulSim >= SimGroupSize/2);
         		SuccessfulSim = 0;
-        		CurrentGroupSim = 0;
+        		CurrentGroupSim = 1;
         	}
 	}
+	UE_LOG(LogTemp,Warning,TEXT("Autonomy : %f, Group n°%d"), MaxTimePerSim, CurrentGroupSim);
 	InitSimulation();
 }
 
@@ -144,56 +149,94 @@ void AManager::ManageNewSimulation()
 /**
  * Mutate configuration of the current group of simulations, based on the outcome it gave.
  * 
- * @param IsSimSuccessful True if the current group configuration is successful, false otherwise.
+ * @param IsGroupSuccessful True if the current group configuration is successful, false otherwise.
  */
-void AManager::MutateSimulationParameters(const bool IsSimSuccessful)
+void AManager::MutateSimulationParameters(const bool IsGroupSuccessful)
 {
-	UE_LOG(LogTemp, Warning, TEXT("%hs"), IsSimSuccessful ? "Success" : "Fail");
+	UE_LOG(LogTemp, Warning, TEXT("%hs"), IsGroupSuccessful ? "Success" : "Fail");
+	
+	if (!IsCurveFound || IsGroupSuccessful)
+	{
+		// We overwrite the saved config as we don't need it right now
+        PreviousSpeed = GroupSpeed;
+        PreviousBatteryCount = GroupBatteryCount;
+	}
+	
 	if (IsCurveFound)
 	{
-		if (!IsSimSuccessful && WasPreviousConfigSuccessful && PreviousNumDrones == GroupNumDrones)
+		if (IsGroupSuccessful && GroupSpeed - SpeedIncrement >= MinSpeed) GroupSpeed -= SpeedIncrement;
+		else
 		{
-			// As the previous config was successful but the current one is not, we save the previous config
-			SuccessfulConfigs.Add({
+			SlowConfigs.Add({
 				PreviousSpeed,
-				(float)PreviousNumDrones,
+				(float)GroupNumDrones,
 				(float)PreviousBatteryCount,
 				InitialWeight + PreviousBatteryCount * BatteryWeight});
-            GroupSpeed = PreviousSpeed + SpeedIncrement;
-            GroupNumDrones += DroneIncrement;
-
-			// As the next config will have the same speed and an additional drone, we expect it to succeed
-			AutoSuccess = true;
-		}
-		else if (IsSimSuccessful)
-		{
-			GroupSpeed -= SpeedIncrement;
-			AutoFail = GroupSpeed < MinSpeed;
+			GroupNumDrones += DroneIncrement;
+			
+			// We save the current config for later comparison
+			PreviousSpeed = GroupSpeed;
+			PreviousBatteryCount = GroupBatteryCount;
 		}
 	}
-	else if (IsSimSuccessful)
+	else
 	{
-		// This block runs only once when the first successful config is found
-		IsCurveFound = true;
-		SuccessfulConfigs.Add({
-			GroupSpeed,
-			(float)GroupNumDrones,
-			(float)GroupBatteryCount,
-			InitialWeight + GroupBatteryCount * BatteryWeight});
-		GroupNumDrones += DroneIncrement;
-		AutoSuccess = true;
-		UE_LOG(LogTemp, Warning, TEXT("Curve found"));
+		if (IsGroupSuccessful)
+		{
+			SlowConfigs.Add({
+				GroupSpeed,
+				(float)GroupNumDrones,
+				(float)GroupBatteryCount,
+				InitialWeight + GroupBatteryCount * BatteryWeight});
+			IsCurveFound = true;
+			GroupNumDrones += DroneIncrement;
+			GroupSpeed -= SpeedIncrement;
+		}
+		else if (GroupSpeed + SpeedIncrement <= MaxSpeed)
+			GroupSpeed += SpeedIncrement;
+		else
+		{
+			GroupNumDrones += DroneIncrement;
+			GroupSpeed = MinSpeed;
+		}
 	}
-	else GroupSpeed += SpeedIncrement;
 
-	// We save the current config for later comparison
-	PreviousSpeed = GroupSpeed;
-	PreviousNumDrones = GroupNumDrones;
-	PreviousBatteryCount = GroupBatteryCount;
-	WasPreviousConfigSuccessful = IsSimSuccessful;
+	// Calculate the least amount of batteries required
+	if (IsGroupSuccessful) AutoSetMinBatteryCountForGroup();
+
+	SummedTimesToFind = 0;
+	
+	// Calculate the maximum autonomy of the battery in minutes
+	
+	MaxTimePerSim = CalculateMaximumAutonomy();
 	
 	UE_LOG(LogTemp, Warning, TEXT("----------------------------"));
 	PrintSimConfigRecap();
+}
+
+
+float AManager::CalculateMaximumAutonomy() const
+{
+	return 60 * BatteryCapacity * MaxBatteryCount / (pow(GroupSpeed,2) * DRONEWEIGHT(MaxBatteryCount)/2.0);
+}
+
+
+void AManager::AutoSetMinBatteryCountForGroup()
+{
+	for (int i = MaxBatteryCount; i > 0; i--)
+		if (SummedTimesToFind/SuccessfulSim/60.0 * pow(GroupSpeed,2) * DRONEWEIGHT(i)/2.0 <= BatteryCapacity * i)
+		{
+			GroupBatteryCount = i;
+			return;
+		}
+	GroupBatteryCount = MaxBatteryCount;
+	ThrowUnexpectedWarning(TEXT("Selected config requires more batteries than allowed !"));
+}
+
+
+void AManager::ThrowUnexpectedWarning(const wchar_t* Text)
+{
+	UE_LOG(LogTemp,Warning,TEXT("UNEXPECTED: %s"), Text);
 }
 
 
@@ -348,6 +391,7 @@ void AManager::ObjectiveFound()
 	if (ReportedSimID == SimID) return;
 	ReportedSimID = SimID;
 	SuccessfulSim++;
+	SummedTimesToFind += CurrentSimulatedTime;
 	HandleSimulationEnd();
 }
 
@@ -377,12 +421,12 @@ void AManager::HandleSimulationEnd()
 
 	// Set up new simulations or print results
 	if (SimulationHasEnded) return;
-	if (GroupNumDrones <= MaxNumDrones) ManageNewSimulation();
+	if (GroupNumDrones < MaxNumDrones) ManageNewSimulation();
 	else
 	{
 		UE_LOG(LogTemp, Warning, TEXT("----------------------------"));
 		UE_LOG(LogTemp, Warning, TEXT("%d drones reached : End of simulations"), GroupNumDrones);
-		for (const auto& sc : SuccessfulConfigs)
+		for (const auto& sc : SlowConfigs)
 			UE_LOG(LogTemp, Warning, TEXT("vitesse:%f,drones:%d,batteries:%d,(weight:%f)"), sc[0], (int)sc[1], (int)sc[2], sc[3]);
 		SimulationHasEnded = true;
 		WriteResultsToFile();
@@ -412,7 +456,7 @@ void AManager::WriteResultsToFile()
 	IPlatformFile& FileManager = FPlatformFileManager::Get().GetPlatformFile();
 
 	TArray<FString> ConfigsToWrite;
-	for (const auto& sc : SuccessfulConfigs) {
+	for (const auto& sc : SlowConfigs) {
 		FString FormattedString = FString::Printf(
 		TEXT("vitesse:%f,drones:%d,batteries:%d,(weight:%f)"),
 			sc[0], (int)sc[1], (int)sc[2], sc[3]);
