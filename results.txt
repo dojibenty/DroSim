@@ -1,0 +1,7 @@
+vitesse:375.000000,drones:1
+vitesse:250.000000,drones:2
+vitesse:225.000000,drones:3
+vitesse:200.000000,drones:4
+vitesse:175.000000,drones:5
+vitesse:175.000000,drones:6
+vitesse:175.000000,drones:7
