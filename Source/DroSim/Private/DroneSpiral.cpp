@@ -11,26 +11,31 @@ void ADroneSpiral::Tick(float DeltaTime)
 {
 	Super::Tick(DeltaTime);
 
-	if (TicksToWait != 0)
-	{
-		TicksToWait--;
-		return;
-	}
-
-	// Calculate the Drone's next location
-	FVector NextLocation = GetActorLocation() + MoveDirection * MovementSpeed * TickInterval;
-	float DistanceToDestination = FVector::Dist(GetActorLocation(), CurrentDestination);
-	float NextDistanceToDestination = FVector::Dist(NextLocation, CurrentDestination);
-
-	// If the Drone is close enough or has passed its destination, it is considered arrived
-	if (DistanceToDestination <= MovementTolerance)
-	{
-		if (--Wander == 0) SetCircle();
-		SetNewDestination();
-	}
-	else if (NextDistanceToDestination >= DistanceToDestination) NextLocation = CurrentDestination;
+	CalculatedPosition = GetActorLocation();
 	
-	SetActorLocation(NextLocation);
+	for (int i = 0; i < SimulationSpeed; i++)
+	{
+		// Calculate the Drone's next location
+		FVector NextLocation = CalculatedPosition + MoveDirection * MovementSpeed * TickInterval;
+		float DistanceToDestination = FVector::Dist(CalculatedPosition, CurrentDestination);
+		float NextDistanceToDestination = FVector::Dist(NextLocation, CurrentDestination);
+
+		// If the Drone is close enough or has passed its destination, it is considered arrived
+		if (DistanceToDestination <= MovementTolerance)
+		{
+			if (--Wander == 0) SetCircle();
+			SetNewDestination();
+		}
+		else if (NextDistanceToDestination >= DistanceToDestination) NextLocation = CurrentDestination;
+	
+		CalculatedPosition = NextLocation;
+
+		if (Manager->IsObjectiveNear(CalculatedPosition)) Manager->ObjectiveFound();
+	}
+
+	SetActorLocation(CalculatedPosition);
+	SetActorRotation(MoveDirection.Rotation());
+	DrawDebugCircle(GetWorld(),CalculatedPosition,Manager->GetVisionRadius(),32,FColor::Yellow,false,TickInterval,0,10,FVector(0,1,0),FVector(1,0,0),false);
 }
 
 
@@ -64,18 +69,17 @@ void ADroneSpiral::SetNewDestination()
 			|| IsOutOfBounds(IntermediatePoint))
 		{
 			// Go back at the center of the circle
-			MoveDirection = CurrentCircleCenter - GetActorLocation();
+			MoveDirection = CurrentCircleCenter - CalculatedPosition;
 			CurrentDestination = CurrentCircleCenter;
 			Wander = WanderSteps + 1;
 		}
 		else
 		{
-			MoveDirection = IntermediatePoint - GetActorLocation();
+			MoveDirection = IntermediatePoint - CalculatedPosition;
 			CurrentDestination = IntermediatePoint;
 		}
 		
 		MoveDirection.Normalize();
-		SetActorRotation(MoveDirection.Rotation());
 	}
 }
 
@@ -96,11 +100,11 @@ void ADroneSpiral::SetCircle()
 			SpiralRadius * FMath::Cos(Angle),
 			SpiralRadius * FMath::Sin(Angle),
 			0);
-		Point = Point + GetActorLocation();
+		Point = Point + CalculatedPosition;
 		CirclePoints.Add(Point);
 	}
-
-	CurrentCircleCenter = GetActorLocation();
+	
+	CurrentCircleCenter = CalculatedPosition;
 	CurrentSpiralIncrementFactor = 1;
 }
 
@@ -119,8 +123,7 @@ void ADroneSpiral::GetRandomDirection()
 		float Magnitude = NewMoveDirection.Size();
 		if (Magnitude > UE_SMALL_NUMBER) MoveDirection = NewMoveDirection / Magnitude;
 		else MoveDirection = NewMoveDirection;
-		SetActorRotation(MoveDirection.Rotation());
-		CurrentDestination = GetActorLocation() + MoveDirection * WanderDistance;
+		CurrentDestination = CalculatedPosition + MoveDirection * WanderDistance;
 	}
 	while (IsOutOfBounds(CurrentDestination));
 }

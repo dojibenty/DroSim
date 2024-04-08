@@ -25,8 +25,7 @@ protected:
 	void HandleSimulationEnd();
 	void MutateSimulationParameters(const bool IsGroupSuccessful);
 	float CalculateMaximumAutonomy() const;
-	void AutoSetMinBatteryCountForGroup();
-	void CalculateGroupBatteryAutonomy();
+	void CalculateMinBatteryCountForGroup();
 	static void ThrowUnexpectedWarning(const wchar_t* Text);
 	void ManageNewSimulation();
 	void SpawnDrones(const TSubclassOf<ADrone> DroneStrategy);
@@ -39,6 +38,8 @@ public:
 	virtual void Tick(float DeltaTime) override;
 	virtual void ObjectiveFound() override;
 	virtual float GetGroupDroneSpeed() override;
+	virtual bool IsObjectiveNear(const FVector& DronePos) override;
+	virtual float GetVisionRadius() override;
 
 private:
 	FVector2D EnvSize;
@@ -61,6 +62,8 @@ private:
 	int MaxBatteryCount;
 	int GroupBatteryCount;
 	float InitialWeight;
+	float CurrentConsumption;
+	float VisionRadius;
 
 	float SpeedIncrement;
 	int DroneIncrement;
@@ -78,8 +81,7 @@ private:
 	int SuccessfulSim = 0;
 	float SummedTimesToFind = 0;
 	bool IsCurveFound = false;
-	bool AutoSuccess = false;
-	bool AutoFail = false;
+	bool IsMaxFound = false;
 
 	float PreviousSpeed = -1;
 	int PreviousNumDrones = -1;

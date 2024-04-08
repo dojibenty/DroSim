@@ -1,9 +1,7 @@
 #include "Drone.h"
 
-#include "AsyncTreeDifferences.h"
 #include "DroneSpiral.h"
 #include "DroneSweep.h"
-#include "Objective.h"
 
 ADrone::ADrone()
 {
@@ -18,23 +16,6 @@ ADrone::ADrone()
 
 	// Loading config from .ini file
 	LoadConfig();
-
-	// Collision sphere for long distance vision of the drone
-	VisionSphere = CreateDefaultSubobject<USphereComponent>(TEXT("VisionSphere"));
-	VisionSphere->InitSphereRadius(VisionSphereRadius);
-	VisionSphere->SetCollisionProfileName("OverlapAll");
-	VisionSphere->SetGenerateOverlapEvents(true);
-	VisionSphere->OnComponentBeginOverlap.AddDynamic(this,&ADrone::OnObjectVisible);
-	VisionSphere->SetupAttachment(RootComponent);
-
-	// Collision sphere for near collisions with other drones
-	DetectionSphere = CreateDefaultSubobject<USphereComponent>(TEXT("DetectionSphere"));
-	DetectionSphere->InitSphereRadius(CollisionCheckRadius);
-	DetectionSphere->SetCollisionProfileName("OverlapAll");
-	DetectionSphere->SetGenerateOverlapEvents(true);
-	DetectionSphere->OnComponentBeginOverlap.AddDynamic(this,&ADrone::OnObjectNear);
-	DetectionSphere->OnComponentEndOverlap.AddDynamic(this,&ADrone::OnObjectAway);
-	DetectionSphere->SetupAttachment(RootComponent);
 }
 
 
@@ -53,12 +34,9 @@ void ADrone::LoadConfig()
 	GConfig->GetInt(TEXT("sim/global"), TEXT("sim_speed"), SimulationSpeed, ConfigFilePath);
 	
 	GConfig->GetFloat(TEXT("sim/global"), TEXT("step"), TickInterval, ConfigFilePath);
-	TickInterval /= SimulationSpeed;
 	
 	GConfig->GetFloat(TEXT("sim/drones"), TEXT("movement_tolerance"), MovementTolerance, ConfigFilePath);
 	GConfig->GetFloat(TEXT("sim/drones"), TEXT("movement_distance"), MovementDistance, ConfigFilePath);
-	GConfig->GetFloat(TEXT("sim/drones"), TEXT("collision_check_radius"), CollisionCheckRadius, ConfigFilePath);
-	GConfig->GetFloat(TEXT("sim/drones"), TEXT("vision_sphere_radius"), VisionSphereRadius, ConfigFilePath);
 	
 	GConfig->GetDouble(TEXT("sim/global"), TEXT("environment_X_length"), EnvSize.X, ConfigFilePath);
 	GConfig->GetDouble(TEXT("sim/global"), TEXT("environment_Y_length"), EnvSize.Y, ConfigFilePath);
@@ -111,7 +89,6 @@ void ADrone::Tick(float DeltaTime)
 	{
 		// Set the speed of the Drone as the Manager reference is only resolved after BeginPlay()
 		MovementSpeed = Manager->GetGroupDroneSpeed();
-		MovementSpeed *= SimulationSpeed;
 		
 		if (this->GetClass() == ADroneSweep::StaticClass())
 		{
@@ -119,7 +96,6 @@ void ADrone::Tick(float DeltaTime)
 				SetDestinationManual(FVector(AssignedZone[1].X,AssignedZone[0].Y,GroundOffset));
 			SweepLength = AssignedZone[1].Y - AssignedZone[0].Y;
 			LeftYBound = AssignedZone[0].Y;
-			UE_LOG(LogTemp,Warning,TEXT("%f - %f = %f"), AssignedZone[1].Y, AssignedZone[0].Y, SweepLength);
 		}
 		else
 		{
@@ -132,10 +108,10 @@ void ADrone::Tick(float DeltaTime)
 		
 		Init = false;
 	}
-	//DrawDebugSphere(GetWorld(), CurrentDestination, 10, 8, FColor::Blue, false, TickInterval); // Current destination tracker
-	//DrawDebugSphere(GetWorld(), GetActorLocation(), VisionSphereRadius, 32, FColor::Red, false, TickInterval); // Vision tracker
+	//DrawDebugSphere(GetWorld(), CurrentDestination, 50, 8, FColor::Yellow, false, TickInterval*SimulationSpeed); // Current destination tracker
 	Super::Tick(DeltaTime);
 }
+
 
 void ADrone::SetDestinationManual(const FVector& NewDestination)
 {
@@ -144,51 +120,6 @@ void ADrone::SetDestinationManual(const FVector& NewDestination)
 	SetActorRotation(MoveDirection.Rotation());
 }
 
-
-
-/**
- * Thrown when an object enters the DetectionSphere of this Drone.
- *
- * @param OtherActor Object entering the sphere.
- */
-void ADrone::OnObjectNear(UPrimitiveComponent* ThisSphere, AActor* OtherActor, UPrimitiveComponent* OtherSphere, int32 OtherBodyIndex, bool bFromSweep, const FHitResult& SweepResult)
-{
-	ADrone* OtherDrone = Cast<ADrone>(OtherActor);
-	if (!OtherDrone || OtherDrone == this) return;
-	if (OverlappingDrones.Contains(OtherDrone)) return;
-	//DrawDebugSphere(GetWorld(), GetActorLocation(), CollisionCheckRadius, 32, FColor::Red, false, TickInterval);
-	FVector OtherDroneLocation = OtherDrone->GetActorLocation();
-	MoveDirection = (OtherDroneLocation - GetActorLocation()).GetSafeNormal();
-	if (OtherDrone->ID > ID) TicksToWait = 4;
-	OverlappingDrones.Add(OtherDrone);
-}
-
-
-/**
- * Thrown when an object exits any collision sphere of this Drone.
- *
- * @param OtherActor Object exiting the sphere.
- */
-void ADrone::OnObjectAway(UPrimitiveComponent* ThisSphere, AActor* OtherActor, UPrimitiveComponent* OtherSphere, int32 OtherBodyIndex)
-{
-	const ADrone* OtherDrone = Cast<ADrone>(OtherActor);
-	if (!OtherDrone || OtherDrone == this) return;
-	MoveDirection = CurrentDestination.GetSafeNormal();
-	OverlappingDrones.Remove(OtherDrone);
-}
-
-
-/**
- * Thrown when an object enters the VisionSphere of this Drone.
- *
- * @param OtherActor Object entering the sphere.
- */
-void ADrone::OnObjectVisible(UPrimitiveComponent* ThisSphere, AActor* OtherActor, UPrimitiveComponent* OtherSphere, int32 OtherBodyIndex, bool bFromSweep, const FHitResult& SweepResult)
-{
-	AObjective* Objective = Cast<AObjective>(OtherActor);
-	if (!Objective) return;
-	Manager->ObjectiveFound();
-}
 
 bool ADrone::IsOutOfBounds(const FVector& Point) const
 {

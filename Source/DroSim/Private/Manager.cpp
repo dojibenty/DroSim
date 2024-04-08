@@ -59,6 +59,7 @@ void AManager::LoadConfig()
 	GConfig->GetInt(TEXT("sim/drones"), TEXT("min_battery_count"), MinBatteryCount, ConfigFilePath);
 	GConfig->GetInt(TEXT("sim/drones"), TEXT("max_battery_count"), MaxBatteryCount, ConfigFilePath);
 	GConfig->GetFloat(TEXT("sim/drones"), TEXT("initial_weight"), InitialWeight, ConfigFilePath);
+	GConfig->GetFloat(TEXT("sim/drones"), TEXT("vision_radius"), VisionRadius, ConfigFilePath);
 	
 	GConfig->GetFloat(TEXT("sim/manager"), TEXT("speed_increment"), SpeedIncrement, ConfigFilePath);
 	GConfig->GetInt(TEXT("sim/manager"), TEXT("drone_increment"), DroneIncrement, ConfigFilePath);
@@ -80,6 +81,10 @@ void AManager::BeginPlay()
 	GroupBatteryCount = MinBatteryCount;
 	MaxTimePerSim = CalculateMaximumAutonomy();
 
+	const int SimSec = (int)(TickInterval * SimulationSpeed);
+	UE_LOG(LogTemp,Warning,TEXT("Current simulation speed : 1 real second = %d simulated second%hs"),
+		SimSec, SimSec > 1 ? "s" : "");
+
 	PrintSimConfigRecap();
 	
 	ManageNewSimulation();
@@ -88,11 +93,8 @@ void AManager::BeginPlay()
 
 void AManager::PrintSimConfigRecap() const
 {
-	UE_LOG(LogTemp, Warning, TEXT("Trying with %d drone%hs of %fkg at %fm/s with %d batter%hs of %fWh"),
-		GroupNumDrones, GroupNumDrones > 1 ? "s" : "",
-		InitialWeight + GroupBatteryCount * BatteryWeight,
-		GroupSpeed,
-		GroupBatteryCount, GroupBatteryCount > 1 ? "ies" : "y", BatteryCapacity);
+	UE_LOG(LogTemp, Warning, TEXT("Trying with %d drone%hs at %d m/s"),
+		GroupNumDrones, GroupNumDrones > 1 ? "s" : "",(int)GroupSpeed);
 }
 
 
@@ -108,7 +110,7 @@ void AManager::Tick(float DeltaTime)
 	Super::Tick(DeltaTime);
 	
 	CurrentSimulatedTime += DeltaTime * SimulationSpeed;
-
+	
 	if (CurrentSimulatedTime >= MaxTimePerSim) HandleSimulationEnd();
 }
 
@@ -120,28 +122,17 @@ void AManager::Tick(float DeltaTime)
  */
 void AManager::ManageNewSimulation()
 {
-	if (AutoSuccess)
-	{
-		AutoSuccess = false;
-		MutateSimulationParameters(true);
-	}
-	else if (AutoFail)
-	{
-		AutoFail = false;
-		MutateSimulationParameters(false);
-	}
-	else
-	{
-		if (CurrentGroupSim++ == SimGroupSize) // End of current group
-        	{
-				// If >50% of simulations result in a success, the configuration is successful
-				if (SimGroupSize == 1) MutateSimulationParameters(SuccessfulSim == 1);
-        		else MutateSimulationParameters(SuccessfulSim >= SimGroupSize/2);
-        		SuccessfulSim = 0;
-        		CurrentGroupSim = 1;
-        	}
-	}
-	UE_LOG(LogTemp,Warning,TEXT("Autonomy : %f, Group n°%d"), MaxTimePerSim, CurrentGroupSim);
+	if (CurrentGroupSim++ == SimGroupSize) // End of current group
+        {
+			// If >50% of simulations result in a success, the configuration is successful
+			if (SimGroupSize == 1) MutateSimulationParameters(SuccessfulSim == 1);
+        	else MutateSimulationParameters(SuccessfulSim >= SimGroupSize/2);
+        	SuccessfulSim = 0;
+        	CurrentGroupSim = 1;
+        }
+	UE_LOG(LogTemp,Warning,TEXT("Autonomy : %d min (%d real seconds)"),
+		(int)floor(MaxTimePerSim / 60),
+		(int)(MaxTimePerSim / (TickInterval * SimulationSpeed)));
 	InitSimulation();
 }
 
@@ -153,7 +144,18 @@ void AManager::ManageNewSimulation()
  */
 void AManager::MutateSimulationParameters(const bool IsGroupSuccessful)
 {
-	UE_LOG(LogTemp, Warning, TEXT("%hs"), IsGroupSuccessful ? "Success" : "Fail");
+	if (IsGroupSuccessful)
+	{
+		UE_LOG(LogTemp, Warning, TEXT("Success"));
+		
+		// Calculate the least amount of batteries required
+		CalculateMinBatteryCountForGroup();
+		UE_LOG(LogTemp, Warning, TEXT("Consumes %d Wh over %d batter%hs (total capacity of %d Wh)"),
+			(int)CurrentConsumption, GroupBatteryCount, GroupBatteryCount > 1 ? "ies" : "y", (int)(GroupBatteryCount * BatteryCapacity));
+	}
+	else UE_LOG(LogTemp, Warning, TEXT("Fail"));
+	
+	SummedTimesToFind = 0;
 	
 	if (!IsCurveFound || IsGroupSuccessful)
 	{
@@ -162,52 +164,58 @@ void AManager::MutateSimulationParameters(const bool IsGroupSuccessful)
         PreviousBatteryCount = GroupBatteryCount;
 	}
 	
-	if (IsCurveFound)
+	if (IsCurveFound && IsMaxFound)
 	{
 		if (IsGroupSuccessful && GroupSpeed - SpeedIncrement >= MinSpeed) GroupSpeed -= SpeedIncrement;
-		else
-		{
-			SlowConfigs.Add({
-				PreviousSpeed,
-				(float)GroupNumDrones,
-				(float)PreviousBatteryCount,
-				InitialWeight + PreviousBatteryCount * BatteryWeight});
-			GroupNumDrones += DroneIncrement;
-			
-			// We save the current config for later comparison
-			PreviousSpeed = GroupSpeed;
-			PreviousBatteryCount = GroupBatteryCount;
-		}
+        else
+        {
+            SlowConfigs.Add({
+            	PreviousSpeed,
+            	(float)GroupNumDrones,
+            	(float)PreviousBatteryCount,
+            	InitialWeight + PreviousBatteryCount * BatteryWeight});
+            
+            GroupNumDrones += DroneIncrement;
+            
+            // We save the current config for later comparison
+            PreviousSpeed = GroupSpeed;
+            PreviousBatteryCount = GroupBatteryCount;
+        }
 	}
 	else
 	{
-		if (IsGroupSuccessful)
+		if (!IsCurveFound && IsGroupSuccessful)
 		{
+			// Found the first valid configuration
 			SlowConfigs.Add({
 				GroupSpeed,
 				(float)GroupNumDrones,
 				(float)GroupBatteryCount,
-				InitialWeight + GroupBatteryCount * BatteryWeight});
+				DRONEWEIGHT(GroupBatteryCount)});
 			IsCurveFound = true;
+			UE_LOG(LogTemp,Warning,TEXT("Curve found"));
+		}
+		if (GroupSpeed + SpeedIncrement <= MaxSpeed)
+			GroupSpeed += SpeedIncrement;
+		else if (IsCurveFound)
+		{
+			// Found the maximum speed drones need to go at
+			FastConfig.push_back(GroupSpeed);
+			FastConfig.push_back(GroupBatteryCount);
+			FastConfig.push_back(DRONEWEIGHT(GroupBatteryCount));
+			IsMaxFound = true;
+			UE_LOG(LogTemp,Warning,TEXT("Max speed found"));
 			GroupNumDrones += DroneIncrement;
 			GroupSpeed -= SpeedIncrement;
 		}
-		else if (GroupSpeed + SpeedIncrement <= MaxSpeed)
-			GroupSpeed += SpeedIncrement;
 		else
 		{
 			GroupNumDrones += DroneIncrement;
 			GroupSpeed = MinSpeed;
 		}
 	}
-
-	// Calculate the least amount of batteries required
-	if (IsGroupSuccessful) AutoSetMinBatteryCountForGroup();
-
-	SummedTimesToFind = 0;
 	
 	// Calculate the maximum autonomy of the battery in minutes
-	
 	MaxTimePerSim = CalculateMaximumAutonomy();
 	
 	UE_LOG(LogTemp, Warning, TEXT("----------------------------"));
@@ -217,18 +225,21 @@ void AManager::MutateSimulationParameters(const bool IsGroupSuccessful)
 
 float AManager::CalculateMaximumAutonomy() const
 {
-	return 60 * BatteryCapacity * MaxBatteryCount / (pow(GroupSpeed,2) * DRONEWEIGHT(MaxBatteryCount)/2.0);
+	return 60 * 60 * BatteryCapacity * MaxBatteryCount / (pow(GroupSpeed,2) * DRONEWEIGHT(MaxBatteryCount)/2.0);
 }
 
 
-void AManager::AutoSetMinBatteryCountForGroup()
+void AManager::CalculateMinBatteryCountForGroup()
 {
-	for (int i = MaxBatteryCount; i > 0; i--)
-		if (SummedTimesToFind/SuccessfulSim/60.0 * pow(GroupSpeed,2) * DRONEWEIGHT(i)/2.0 <= BatteryCapacity * i)
-		{
-			GroupBatteryCount = i;
-			return;
-		}
+	for (int i = 0; i < MaxBatteryCount; i++)
+	{
+		CurrentConsumption = SummedTimesToFind/SuccessfulSim/60.0/60.0 * pow(GroupSpeed,2) * DRONEWEIGHT(i)/2.0;
+		if (CurrentConsumption <= BatteryCapacity * i)
+        	{
+        		GroupBatteryCount = i;
+        		return;
+        	}
+	}
 	GroupBatteryCount = MaxBatteryCount;
 	ThrowUnexpectedWarning(TEXT("Selected config requires more batteries than allowed !"));
 }
@@ -236,7 +247,7 @@ void AManager::AutoSetMinBatteryCountForGroup()
 
 void AManager::ThrowUnexpectedWarning(const wchar_t* Text)
 {
-	UE_LOG(LogTemp,Warning,TEXT("UNEXPECTED: %s"), Text);
+	UE_LOG(LogTemp,Warning,TEXT("UNEXPECTED : %s"), Text);
 }
 
 
@@ -417,6 +428,7 @@ void AManager::HandleSimulationEnd()
 	FlushPersistentDebugLines(GetWorld());
 
 	// Reset time
+	UE_LOG(LogTemp,Warning,TEXT("%d/%d"),(int)CurrentSimulatedTime,(int)MaxTimePerSim);
 	CurrentSimulatedTime = 0;
 
 	// Set up new simulations or print results
@@ -425,9 +437,12 @@ void AManager::HandleSimulationEnd()
 	else
 	{
 		UE_LOG(LogTemp, Warning, TEXT("----------------------------"));
-		UE_LOG(LogTemp, Warning, TEXT("%d drones reached : End of simulations"), GroupNumDrones);
+		UE_LOG(LogTemp, Warning, TEXT("%d drones reached : End of simulations"), GroupNumDrones-1);
+		UE_LOG(LogTemp, Warning, TEXT("Fast configuration :"));
+		UE_LOG(LogTemp, Warning, TEXT("speed:%d,batteries:%d,(weight:%d)"), (int)FastConfig[0], (int)FastConfig[1], (int)FastConfig[2]);
+		UE_LOG(LogTemp, Warning, TEXT("Slow configurations :"));
 		for (const auto& sc : SlowConfigs)
-			UE_LOG(LogTemp, Warning, TEXT("vitesse:%f,drones:%d,batteries:%d,(weight:%f)"), sc[0], (int)sc[1], (int)sc[2], sc[3]);
+			UE_LOG(LogTemp, Warning, TEXT("speed:%d,drones:%d,batteries:%d,(weight:%d)"), (int)sc[0], (int)sc[1], (int)sc[2], (int)sc[3]);
 		SimulationHasEnded = true;
 		WriteResultsToFile();
 	}
@@ -455,10 +470,18 @@ void AManager::WriteResultsToFile()
 	
 	IPlatformFile& FileManager = FPlatformFileManager::Get().GetPlatformFile();
 
+	// Prepare configurations for writing to file
 	TArray<FString> ConfigsToWrite;
+	
+	ConfigsToWrite.Add(FString::Printf(
+		TEXT("speed:%f,batteries:%d,(weight:%f)"),
+		FastConfig[0], (int)FastConfig[1], FastConfig[2]));
+	
+	ConfigsToWrite.Add(FString::Printf(TEXT("---")));
+	
 	for (const auto& sc : SlowConfigs) {
 		FString FormattedString = FString::Printf(
-		TEXT("vitesse:%f,drones:%d,batteries:%d,(weight:%f)"),
+		TEXT("speed:%f,drones:%d,batteries:%d,(weight:%f)"),
 			sc[0], (int)sc[1], (int)sc[2], sc[3]);
 		ConfigsToWrite.Add(FormattedString);
 	}
@@ -487,3 +510,12 @@ void AManager::DrawDebugBoxFromDiagonalPoints(const FVector2D& TopLeft, const FV
 	DrawDebugBox(GetWorld(), Center, Extent, FQuat::Identity, Color, true, -1, 0, Thickness);
 }
 
+bool AManager::IsObjectiveNear(const FVector& DronePos)
+{
+	return FVector::Dist(DronePos,CurrentSimulatedObjective->GetActorLocation()) <= VisionRadius;
+}
+
+float AManager::GetVisionRadius()
+{
+	return VisionRadius;
+}

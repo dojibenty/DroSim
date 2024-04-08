@@ -11,5 +11,7 @@ class DROSIM_API ADroneSweep : public ADrone
 	virtual void Tick(float DeltaTime) override;
 	virtual void SetNewDestination() override;
 	bool GoesUp = true;
+	bool TopToBottom = false;
 	bool LeftToRight = true;
+	int HeightCount = 0;
 };

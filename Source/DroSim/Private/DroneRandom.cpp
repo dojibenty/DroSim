@@ -12,26 +12,31 @@ void ADroneRandom::Tick(float DeltaTime)
 {
 	Super::Tick(DeltaTime);
 
-	if (TicksToWait != 0)
+	CalculatedPosition = GetActorLocation();
+	
+	for (int i = 0; i < SimulationSpeed; i++)
 	{
-		TicksToWait--;
-		return;
+		// Calculate the Drone's next location
+		FVector NextLocation = CalculatedPosition + MoveDirection * MovementSpeed * TickInterval;
+		float DistanceToDestination = FVector::Dist(CalculatedPosition, CurrentDestination);
+		float NextDistanceToDestination = FVector::Dist(NextLocation, CurrentDestination);
+	
+		// If the Drone is close enough or has passed its destination, it is considered arrived
+		if (DistanceToDestination <= MovementTolerance)
+		{
+			CalculatedPosition = CurrentDestination;
+			SetNewDestination();
+		}
+		else if (NextDistanceToDestination >= DistanceToDestination) NextLocation = CurrentDestination;
+	
+		CalculatedPosition = NextLocation;
+
+		if (Manager->IsObjectiveNear(CalculatedPosition)) Manager->ObjectiveFound();
 	}
-	
-	// Calculate the Drone's next location
-	FVector NextLocation = GetActorLocation() + MoveDirection * MovementSpeed * TickInterval;
-	float DistanceToDestination = FVector::Dist(GetActorLocation(), CurrentDestination);
-	float NextDistanceToDestination = FVector::Dist(NextLocation, CurrentDestination);
-	
-	// If the Drone is close enough or has passed its destination, it is considered arrived
-	if (DistanceToDestination <= MovementTolerance)
-	{
-		SetActorLocation(CurrentDestination);
-		SetNewDestination();
-	}
-	else if (NextDistanceToDestination >= DistanceToDestination) NextLocation = CurrentDestination;
-	
-	SetActorLocation(NextLocation);
+
+	SetActorLocation(CalculatedPosition);
+	SetActorRotation(MoveDirection.Rotation());
+	DrawDebugCircle(GetWorld(),CalculatedPosition,Manager->GetVisionRadius(),32,FColor::Yellow,false,TickInterval,0,10,FVector(0,1,0),FVector(1,0,0),false);
 }
 
 
@@ -54,11 +59,8 @@ void ADroneRandom::SetNewDestination()
         float Magnitude = NewMoveDirection.Size();
         if (Magnitude > SMALL_NUMBER) MoveDirection = NewMoveDirection / Magnitude;
         else MoveDirection = NewMoveDirection;
-
-		// Rotate the Drone to face its destination
-        SetActorRotation(MoveDirection.Rotation());
 		
-        CurrentDestination = GetActorLocation() + MoveDirection * MovementDistance;
+        CurrentDestination = CalculatedPosition + MoveDirection * MovementDistance;
 	}
 	while (IsOutOfBounds(CurrentDestination));
 	// Redo if the next destination is outside environment limits
