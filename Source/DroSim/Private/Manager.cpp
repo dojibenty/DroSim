@@ -82,7 +82,7 @@ void AManager::BeginPlay()
 	MaxTimePerSim = CalculateMaximumAutonomy();
 
 	const int SimSec = (int)(TickInterval * SimulationSpeed);
-	UE_LOG(LogTemp,Warning,TEXT("Current simulation speed : 1 real second = %d simulated second%hs"),
+	UE_LOG(LogTemp,Warning,TEXT("Current simulation speed : 1 simulated second = %d real second%hs"),
 		SimSec, SimSec > 1 ? "s" : "");
 
 	PrintSimConfigRecap();
@@ -91,10 +91,17 @@ void AManager::BeginPlay()
 }
 
 
+/**
+ * Prints to screen a recap of the current group settings.
+ */
 void AManager::PrintSimConfigRecap() const
 {
 	UE_LOG(LogTemp, Warning, TEXT("Trying with %d drone%hs at %d m/s"),
 		GroupNumDrones, GroupNumDrones > 1 ? "s" : "",(int)GroupSpeed);
+	
+	UE_LOG(LogTemp,Warning,TEXT("Maximum autonomy : %d min (%d simulated seconds)"),
+		(int)floor(MaxTimePerSim / 60),
+		(int)(MaxTimePerSim / (TickInterval * SimulationSpeed)));
 }
 
 
@@ -130,15 +137,12 @@ void AManager::ManageNewSimulation()
         	SuccessfulSim = 0;
         	CurrentGroupSim = 1;
         }
-	UE_LOG(LogTemp,Warning,TEXT("Autonomy : %d min (%d real seconds)"),
-		(int)floor(MaxTimePerSim / 60),
-		(int)(MaxTimePerSim / (TickInterval * SimulationSpeed)));
 	InitSimulation();
 }
 
 
 /**
- * Mutate configuration of the current group of simulations, based on the outcome it gave.
+ * Mutates configuration of the current group of simulations, based on the outcome it gave.
  * 
  * @param IsGroupSuccessful True if the current group configuration is successful, false otherwise.
  */
@@ -147,6 +151,7 @@ void AManager::MutateSimulationParameters(const bool IsGroupSuccessful)
 	if (IsGroupSuccessful)
 	{
 		UE_LOG(LogTemp, Warning, TEXT("Success"));
+		UE_LOG(LogTemp,Warning,TEXT("Average of %d min to find"),(int)(SummedTimesToFind/SuccessfulSim/60));
 		
 		// Calculate the least amount of batteries required
 		CalculateMinBatteryCountForGroup();
@@ -223,15 +228,23 @@ void AManager::MutateSimulationParameters(const bool IsGroupSuccessful)
 }
 
 
+/**
+ * Calculates the autonomy a drone can have with the highest battery capacity.
+ *
+ * @returns Maximum autonomy of the drone.
+ */
 float AManager::CalculateMaximumAutonomy() const
 {
 	return 60 * 60 * BatteryCapacity * MaxBatteryCount / (pow(GroupSpeed,2) * DRONEWEIGHT(MaxBatteryCount)/2.0);
 }
 
 
+/**
+ * Calculates the minimum battery capacity a drone has to have to be successful with the current settings.
+ */
 void AManager::CalculateMinBatteryCountForGroup()
 {
-	for (int i = 0; i < MaxBatteryCount; i++)
+	for (int i = 0; i <= MaxBatteryCount; i++)
 	{
 		CurrentConsumption = SummedTimesToFind/SuccessfulSim/60.0/60.0 * pow(GroupSpeed,2) * DRONEWEIGHT(i)/2.0;
 		if (CurrentConsumption <= BatteryCapacity * i)
@@ -245,6 +258,9 @@ void AManager::CalculateMinBatteryCountForGroup()
 }
 
 
+/**
+ * Prints a warning with the mention "UNEXPECTED".
+ */
 void AManager::ThrowUnexpectedWarning(const wchar_t* Text)
 {
 	UE_LOG(LogTemp,Warning,TEXT("UNEXPECTED : %s"), Text);
@@ -308,6 +324,11 @@ void AManager::SpawnDrones(const TSubclassOf<ADrone> DroneStrategy)
 }
 
 
+/**
+ * Divides the environment in sub-zones and assigns one zone per drone.
+ *
+ * A zone is a vector of two FVector2D representing the top left and bottom right points.
+ */
 TArray<std::vector<FVector2D>> AManager::AssignZones()
 {
 	int FilledLines = floor((float)GroupNumDrones/(float)ColMax);
@@ -403,12 +424,13 @@ void AManager::ObjectiveFound()
 	ReportedSimID = SimID;
 	SuccessfulSim++;
 	SummedTimesToFind += CurrentSimulatedTime;
+	UE_LOG(LogTemp,Warning,TEXT("Found in %d min"),(int)(CurrentSimulatedTime/60));
 	HandleSimulationEnd();
 }
 
 
 /**
- * Reset the environment to its initial state.
+ * Resets the environment to its initial state.
  *
  * This function destroys every Drones and Objective currently playing.
  *
@@ -428,7 +450,6 @@ void AManager::HandleSimulationEnd()
 	FlushPersistentDebugLines(GetWorld());
 
 	// Reset time
-	UE_LOG(LogTemp,Warning,TEXT("%d/%d"),(int)CurrentSimulatedTime,(int)MaxTimePerSim);
 	CurrentSimulatedTime = 0;
 
 	// Set up new simulations or print results
@@ -439,10 +460,10 @@ void AManager::HandleSimulationEnd()
 		UE_LOG(LogTemp, Warning, TEXT("----------------------------"));
 		UE_LOG(LogTemp, Warning, TEXT("%d drones reached : End of simulations"), GroupNumDrones-1);
 		UE_LOG(LogTemp, Warning, TEXT("Fast configuration :"));
-		UE_LOG(LogTemp, Warning, TEXT("speed:%d,batteries:%d,(weight:%d)"), (int)FastConfig[0], (int)FastConfig[1], (int)FastConfig[2]);
+		UE_LOG(LogTemp, Warning, TEXT("speed:%d,batteries:%d,(weight:%f)"), (int)FastConfig[0], (int)FastConfig[1], FastConfig[2]);
 		UE_LOG(LogTemp, Warning, TEXT("Slow configurations :"));
 		for (const auto& sc : SlowConfigs)
-			UE_LOG(LogTemp, Warning, TEXT("speed:%d,drones:%d,batteries:%d,(weight:%d)"), (int)sc[0], (int)sc[1], (int)sc[2], (int)sc[3]);
+			UE_LOG(LogTemp, Warning, TEXT("speed:%d,drones:%d,batteries:%d,(weight:%f)"), (int)sc[0], (int)sc[1], (int)sc[2], sc[3]);
 		SimulationHasEnded = true;
 		WriteResultsToFile();
 	}
@@ -501,6 +522,10 @@ void AManager::WriteResultsToFile()
 	}
 }
 
+
+/**
+ * Draws a box based on two diagonal points instead of centre and extend.
+ */
 void AManager::DrawDebugBoxFromDiagonalPoints(const FVector2D& TopLeft, const FVector2D& BottomRight, const FColor& Color, const int& Thickness)
 {
 	FVector v1 = FVector(TopLeft.X,TopLeft.Y,10);
@@ -510,11 +535,19 @@ void AManager::DrawDebugBoxFromDiagonalPoints(const FVector2D& TopLeft, const FV
 	DrawDebugBox(GetWorld(), Center, Extent, FQuat::Identity, Color, true, -1, 0, Thickness);
 }
 
+
+/**
+ * Checks whether the given drone can see the objective from its current position.
+ */
 bool AManager::IsObjectiveNear(const FVector& DronePos)
 {
 	return FVector::Dist(DronePos,CurrentSimulatedObjective->GetActorLocation()) <= VisionRadius;
 }
 
+
+/**
+ * Returns the vision radius of drones.
+ */
 float AManager::GetVisionRadius()
 {
 	return VisionRadius;

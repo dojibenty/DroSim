@@ -1,7 +1,9 @@
-vitesse:375.000000,drones:1
-vitesse:250.000000,drones:2
-vitesse:225.000000,drones:3
-vitesse:200.000000,drones:4
-vitesse:175.000000,drones:5
-vitesse:175.000000,drones:6
-vitesse:175.000000,drones:7
+speed:28.000000,batteries:3,(weight:5.000000)
+---
+speed:14.000000,drones:1,batteries:3,(weight:5.000000)
+speed:14.000000,drones:2,batteries:2,(weight:4.500000)
+speed:14.000000,drones:3,batteries:2,(weight:4.500000)
+speed:14.000000,drones:4,batteries:2,(weight:4.500000)
+speed:14.000000,drones:5,batteries:1,(weight:4.000000)
+speed:14.000000,drones:6,batteries:1,(weight:4.000000)
+speed:14.000000,drones:7,batteries:1,(weight:4.000000)

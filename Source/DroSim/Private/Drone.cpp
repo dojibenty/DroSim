@@ -103,7 +103,6 @@ void ADrone::Tick(float DeltaTime)
 		(AssignedZone[0].X + AssignedZone[1].X) / 2.0,
 		(AssignedZone[0].Y + AssignedZone[1].Y) / 2.0,
 		GroundOffset));
-			DrawDebugSphere(GetWorld(), CurrentDestination, 10, 8, FColor::Blue, true, -1);
 		}
 		
 		Init = false;
@@ -113,6 +112,9 @@ void ADrone::Tick(float DeltaTime)
 }
 
 
+/**
+ * Manually sets the destination point.
+ */
 void ADrone::SetDestinationManual(const FVector& NewDestination)
 {
 	CurrentDestination = MoveDirection = NewDestination;
@@ -121,6 +123,9 @@ void ADrone::SetDestinationManual(const FVector& NewDestination)
 }
 
 
+/**
+ * Checks whether the given point is outside the boundaries of the drone's assigned zone.
+ */
 bool ADrone::IsOutOfBounds(const FVector& Point) const
 {
 	return Point.X < AssignedZone[1].X
